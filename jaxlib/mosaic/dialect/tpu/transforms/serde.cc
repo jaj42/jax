@@ -319,6 +319,24 @@ LogicalResult arith_constant_downgrade(Operation* op, int version, bool&) {
   return success();
 }
 
+LogicalResult vector_load_downgrade(Operation* op, int version, bool&) {
+  if (version < 12) {
+    if (!op->hasAttr("strides")) {
+      op->setAttr("strides", DenseI32ArrayAttr::get(op->getContext(), {}));
+    }
+  }
+  return success();
+}
+
+LogicalResult vector_store_downgrade(Operation* op, int version, bool&) {
+  if (version < 12) {
+    if (!op->hasAttr("strides")) {
+      op->setAttr("strides", DenseI32ArrayAttr::get(op->getContext(), {}));
+    }
+  }
+  return success();
+}
+
 const llvm::StringMap<SerdeRuleType>& upgrade_rules() {
   static auto rules = new llvm::StringMap<SerdeRuleType>{
       {EnqueueDMAOp::getOperationName(), enqueue_dma_upgrade},
@@ -345,6 +363,8 @@ const llvm::StringMap<SerdeRuleType>& downgrade_rules() {
       {vector::MultiDimReductionOp::getOperationName(),
        vector_multi_dim_reduce_downgrade},
       {arith::ConstantOp::getOperationName(), arith_constant_downgrade},
+      {VectorLoadOp::getOperationName(), vector_load_downgrade},
+      {VectorStoreOp::getOperationName(), vector_store_downgrade},
   };
   return *rules;
 }
