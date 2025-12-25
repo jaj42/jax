@@ -1291,6 +1291,12 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("mesh", &xla::NamedSharding::mesh)
       .def("partitions",
            [](const xla::NamedSharding& self) { return self.JaxPartitions(); })
+      .def("dimensions",
+           [](const xla::NamedSharding& self) {
+             return std::vector<int64_t>(self.dimensions().begin(),
+                                         self.dimensions().end());
+           })
+      .def("replication_factor", &xla::NamedSharding::ReplicationFactor)
       .def("__repr__",
            [](const xla::NamedSharding& self) { return self.ToString(); });
 
@@ -1346,6 +1352,10 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
       .def("is_hlo_sharding_v3", &xla::HloSharding::UseNamedShardingLeaf)
       .def("hlo_sharding_v3",
            [](const xla::HloSharding& self) { return self.named_sharding(); })
+      .def("v3_to_v2_sharding",
+           [](const xla::HloSharding& self) {
+             return xla::HloSharding::V3ToV2Sharding(self.named_sharding());
+           })
       .def("tile", [](const xla::HloSharding& self,
                       xla::Shape shape) { return self.TileShape(shape); })
       // tile_assignment.array() is computed using an internal cache,
@@ -1358,9 +1368,7 @@ void BuildXlaCompilerSubmodule(nb::module_& m) {
           nb::lock_self())
       .def(
           "num_devices",
-          [](const xla::HloSharding& self) {
-            return self.tile_assignment().num_elements();
-          },
+          [](const xla::HloSharding& self) { return self.num_devices(); },
           nb::lock_self())
       .def(
           "num_dimensions",
