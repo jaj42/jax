@@ -371,6 +371,7 @@ class CoreMapTest(jtu.JaxTestCase):
           mesh=mesh,
           compiler_params=pltpu.CompilerParams(
               use_tc_tiling_on_sc=use_tc_tiling_on_sc,
+              kernel_type=core_type,
           ),
       )
       def kernel(x_ref, out_ref):
