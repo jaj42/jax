@@ -900,19 +900,17 @@ def _dma_start_lowering_rule(
     priority: int,
     add: bool,
 ):
-  (
-      src_ref,
-      src_transforms,
-      dst_ref,
-      dst_transforms,
-      sem,
-      sem_transforms,
-      src_sem,
-      src_sem_transforms,
-      device_id,
-  ) = tpu_primitives._dma_unflatten(tree, args)
-  src_aval, _, dst_aval, _, sem_aval, _, src_sem_aval, _, device_id_aval = (
-      tpu_primitives._dma_unflatten(tree, ctx.avals_in)
+  src_ref, dst_ref, sem, src_sem, device_id = tpu_primitives._dma_unflatten(
+      tree, args
+  )
+  src_ref, src_transforms = tpu_primitives._get_ref_and_transforms(src_ref)
+  dst_ref, dst_transforms = tpu_primitives._get_ref_and_transforms(dst_ref)
+  sem, sem_transforms = tpu_primitives._get_ref_and_transforms(sem)
+  src_sem, src_sem_transforms = tpu_primitives._get_ref_and_transforms(src_sem)
+
+  src_aval, dst_aval, sem_aval, src_sem_aval, device_id_aval = (
+      tpu_primitives._get_ref(x)
+      for x in tpu_primitives._dma_unflatten(tree, ctx.avals_in)
   )
 
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
@@ -967,19 +965,16 @@ def _dma_wait_lowering_rule(
     tree,
     device_id_type: pallas_primitives.DeviceIdType,
 ):
-  (
-      src_ref,
-      src_transforms,
-      dst_ref,
-      dst_transforms,
-      sem,
-      sem_transforms,
-      _,
-      _,
-      device_id,
-  ) = tpu_primitives._dma_unflatten(tree, args)
-  src_aval, _, dst_aval, _, sem_aval, _, _, _, device_id_aval = (
-      tpu_primitives._dma_unflatten(tree, ctx.avals_in)
+  src_ref, dst_ref, sem, _, device_id = tpu_primitives._dma_unflatten(
+      tree, args
+  )
+  src_ref, src_transforms = tpu_primitives._get_ref_and_transforms(src_ref)
+  dst_ref, dst_transforms = tpu_primitives._get_ref_and_transforms(dst_ref)
+  sem, sem_transforms = tpu_primitives._get_ref_and_transforms(sem)
+
+  src_aval, dst_aval, sem_aval, _, device_id_aval = (
+      tpu_primitives._get_ref(x)
+      for x in tpu_primitives._dma_unflatten(tree, ctx.avals_in)
   )
 
   src_ref, dst_ref, indirect_offsets = _prepare_dma_refs(
