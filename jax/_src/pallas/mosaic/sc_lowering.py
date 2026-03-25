@@ -17,7 +17,7 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import itertools
-from typing import Any, Callable, cast, NoReturn
+from typing import Any, Callable, cast, NoReturn, Mapping
 
 from jax._src import api_util
 from jax._src import core as jax_core
@@ -141,6 +141,7 @@ def lower_pipelined_jaxpr_to_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
     use_tc_tiling: bool | None = None,
+    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
 ) -> ir.Module:
   module = ir.Module.create()
   lower_pipelined_jaxpr_into_module(
@@ -154,6 +155,7 @@ def lower_pipelined_jaxpr_to_module(
       mesh=mesh,
       dynamic_shape_replacement_enabled=dynamic_shape_replacement_enabled,
       use_tc_tiling=use_tc_tiling,
+      mpmd_meshes=mpmd_meshes,
   )
   return module
 
@@ -170,6 +172,7 @@ def lower_pipelined_jaxpr_into_module(
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
     use_tc_tiling: bool | None = None,
+    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
 ) -> None:
   if dynamic_shape_replacement_enabled:
     raise NotImplementedError(
@@ -205,6 +208,7 @@ def lower_pipelined_jaxpr_into_module(
           dimension_semantics=dimension_semantics,
           kernel_type=kernel_type,
           mesh=mesh,
+          mpmd_meshes=mpmd_meshes,
       )
       return
     is_semaphore.append(bm.block_aval.memory_space is MemorySpace.SEMAPHORE)
@@ -347,6 +351,7 @@ def lower_pipelined_jaxpr_into_module(
         dimension_semantics=dimension_semantics,  # pytype: disable=wrong-arg-types
         kernel_type=kernel_type,
         mesh=mesh,
+        mpmd_meshes=mpmd_meshes,
     )
 
 
@@ -361,8 +366,10 @@ def lower_jaxpr_into_module(
     kernel_type: tpu_core.CoreType,
     mesh: mesh_lib.Mesh | None = None,
     dynamic_shape_replacement_enabled: bool = False,
+    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh],
 ):
   """Lowers a Jaxpr to a Mosaic SparseCore module."""
+  assert mpmd_meshes is not None, "mpmd_meshes must be provided."
   if dynamic_shape_replacement_enabled:
     raise NotImplementedError(
         "Dynamic shape replacement is not supported for SparseCore."
@@ -384,6 +391,7 @@ def lower_jaxpr_into_module(
       mosaic_grid_mapping=mosaic_grid_mapping,
       forward_compatible=lowering_context.is_forward_compat(),
       backend=backend,
+      mpmd_meshes=mpmd_meshes,
   )
   module.body.append(func_op)
   sym_tab.insert(func_op)
@@ -410,6 +418,7 @@ def lower_jaxpr_into_module(
         forward_compatible=lowering_context.is_forward_compat(),
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        mpmd_meshes=mpmd_meshes,
     )
     assert mlir_func.verify(), mlir_func
     module.body.append(mlir_func)
@@ -464,8 +473,10 @@ def lower_jaxpr_to_func(
     mosaic_grid_mapping: MosaicGridMapping,
     forward_compatible: bool,
     backend: Any | None,
+    mpmd_meshes: Mapping[tpu_core.CoreType, pallas_core.Mesh] | None = None,
 ) -> func.FuncOp:
   """Lowers a Jaxpr to a Mosaic SparseCore function."""
+  assert mpmd_meshes is not None, "mpmd_meshes must be provided."
   num_grid = len(mosaic_grid_mapping.grid_types)
   num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
   if num_scalar_prefetch:
@@ -502,12 +513,13 @@ def lower_jaxpr_to_func(
         jaxpr_indices,
         arg_block_shapes,
         source_info_util.NameStack(),
-        mesh_context=mosaic_grid_mapping.mesh_info,
+        jax_mesh_context=mosaic_grid_mapping.mesh_info,
         traceback_caches=mlir.TracebackCaches(),
         kernel_type=kernel_type,
         forward_compatible=forward_compatible,
         backend=backend,
         dynamic_shape_replacement_fn=dynamic_shape_replacement_fn,
+        mpmd_meshes=mpmd_meshes,
     )
     return tc_lowering.jaxpr_subcomp(
           lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch
