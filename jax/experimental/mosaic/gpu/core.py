@@ -184,18 +184,6 @@ def _has_communication(module, **_):
 KNOWN_KERNELS: dict[bytes, bytes] = {}
 
 
-def _get_collective_metadata_size(num_params: int, num_peers: int) -> int:
-  """Returns the size of the collective metadata buffer for the given number of parameters and peers."""
-  return (
-      # Stores the collective metadata structure.
-      launch_context.COLLECTIVE_METADATA_SIZE
-      # For each peer we need to store a pointer to each parameter.
-      + num_peers * num_params
-      # For each parameter we need to store a pointer to the multimem address.
-      + num_params
-  )
-
-
 def _mosaic_gpu_lowering_rule(
     ctx,
     *args,
@@ -608,7 +596,7 @@ def _launch(
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
     device_collective_metadata: ir.Value | None = None,
-    host_collective_metadata: ir.Value | None = None,
+    buffers: Any = None,
     num_peers: int = 0,
     num_params: int = 0,
 ):
@@ -710,7 +698,7 @@ def _launch(
         cluster,
         prof,
         device_collective_metadata=device_collective_metadata,
-        host_collective_metadata=host_collective_metadata,
+        buffers=buffers,
         num_peers=num_peers,
         num_params=num_params,
     )
@@ -873,7 +861,6 @@ def _lower_as_gpu_kernel(
         arg_refs.append(arg_memref)
 
       collective_metadata = None
-      host_collective_metadata = None
       num_peers = 0
       num_params = 0
 
@@ -891,19 +878,10 @@ def _lower_as_gpu_kernel(
         )
 
         metadata_ty = ir.MemRefType.get(
-            (_get_collective_metadata_size(num_params, num_peers),),
+            (launch_context.get_collective_metadata_size(num_params, num_peers),),
             ir.IntegerType.get_signless(64),
         )
         collective_metadata = utils.ptr_as_memref(metadata_ptr, metadata_ty)
-
-        # The host metadata is passed as the additional parameters to the kernel
-        # and used for the TMA initialization.
-        host_metadata_ptr = llvm.load(
-            ptr_ty, utils.getelementptr(buffers, [num_params + 1], ptr_ty)
-        )
-        host_collective_metadata = utils.ptr_as_memref(
-            host_metadata_ptr, metadata_ty
-        )
 
       prof_buffer = arg_refs.pop() if prof_spec is not None else None
 
@@ -918,7 +896,7 @@ def _lower_as_gpu_kernel(
           prof_spec,
           prof_buffer,
           collective_metadata,
-          host_collective_metadata,
+          buffers,
           num_peers,
           num_params,
       ) as (_launch_ctx, smem_refs):
