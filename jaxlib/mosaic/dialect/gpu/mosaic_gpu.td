@@ -480,6 +480,40 @@ def MosaicGPU_VectorLoadOp : Op<MosaicGPU_Dialect, "vector_load",
   let results = (outs AnyFixedVectorOfNonZeroRank);
 }
 
+def MosaicGPU_MultimemLoadReductionType : I32EnumAttr<"MultimemLoadReductionType",
+    "Reduction operation for TMA.",
+    [
+      I32EnumAttrCase<"Add", 0, "add">,
+      I32EnumAttrCase<"Min", 1, "min">,
+      I32EnumAttrCase<"Max", 2, "max">,
+      I32EnumAttrCase<"And", 3, "and">,
+      I32EnumAttrCase<"Or", 4, "or">,
+      I32EnumAttrCase<"Xor", 5, "xor">,
+    ]>{
+  let cppNamespace = "::mosaic_gpu";
+}
+
+def MosaicGPU_MultimemLoadReduceOp : Op<MosaicGPU_Dialect, "multimem_load_reduce",
+      [DeclareOpInterfaceMethods<InferTypeOpInterface>, MemoryEffects<[MemRead]>]> {
+  let summary = "Reads from a MemRef and reduces across devices using multimem.";
+  let description = [{
+    Reads from a GMEM memref and reduces across all devices using hardware
+    accelerated multimem instructions.
+
+    And, Or and Xor reduction types are compatible only with integer inputs.
+  }];
+
+  let arguments = (ins
+    AnyNon0RankedMemRef:$source,
+    // Attrs
+    MosaicGPU_MultimemLoadReductionType:$reduction_type,
+    OptionalAttr<BoolAttr>:$is_signed
+  );
+  let results = (outs AnyFixedVectorOfNonZeroRank);
+
+  let hasVerifier = 1;
+}
+
 def MosaicGPU_AtomicOpType : I32EnumAttr<"AtomicOpType",
     "Atomic store operation type",
     [
