@@ -35,6 +35,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import sc_lowering
+from jax._src.pallas.mosaic import tpu_info
 from jax._src.state import types as state_types
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
@@ -52,7 +53,9 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
   ) or (
       isinstance(x, jax_core.Tracer)
       and isinstance(x.aval, state_types.AbstractLinVal)
-  ), type(x)
+  ), type(
+      x
+  )
   if isinstance(x, jax.Array):
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
       return x.astype(lowering.BOOL_MEMREF_TYPE)
@@ -63,6 +66,24 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.AbstractValue):
         raise NotImplementedError  # TODO(mattjj,sharadmv)
       return jax_core.ShapedArray(x.shape, lowering.BOOL_MEMREF_TYPE)
     return x
+
+
+def _check_sparsecore_availability(kernel_type: tpu_core.CoreType) -> None:
+  if kernel_type in (
+      tpu_core.CoreType.SC_SCALAR_SUBCORE,
+      tpu_core.CoreType.SC_VECTOR_SUBCORE,
+  ):
+    if not tpu_info.is_tpu_device():
+      raise ValueError(
+          "SparseCore kernels are only supported on TPU, but the current"
+          f" device is {tpu_info.get_device_kind()}."
+      )
+    info = tpu_info.get_tpu_info()
+    if not info.sparse_core:
+      raise ValueError(
+          "SparseCore is not available on the current device"
+          f" ({info.chip_version}), but the kernel type is set to SparseCore."
+      )
 
 
 def _get_memory_space_from_aval(
@@ -102,12 +123,15 @@ def _get_memory_spaces_from_avals(
     avals: Sequence[jax_core.AbstractValue], kernel_type: tpu_core.CoreType
 ) -> tuple[tpu_custom_call.MemorySpace | None, ...] | None:
   memory_spaces = None
-  if any(isinstance(aval, jax_core.ShapedArray)
-         and not isinstance(aval.memory_space, jax_core.MemorySpace)
-         for aval in avals):
+  if any(
+      isinstance(aval, jax_core.ShapedArray)
+      and not isinstance(aval.memory_space, jax_core.MemorySpace)
+      for aval in avals
+  ):
     memory_spaces = tuple(
         _get_memory_space_from_aval(aval, kernel_type=kernel_type)
-        for aval in avals)
+        for aval in avals
+    )
   return memory_spaces
 
 
@@ -125,9 +149,11 @@ def _resolve_memory_spaces(
       out_avals, kernel_type=kernel_type
   )
   input_memory_spaces = None
-  if any(isinstance(aval, jax_core.ShapedArray)
-         and not isinstance(aval.memory_space, jax_core.MemorySpace)
-         for aval in in_avals):
+  if any(
+      isinstance(aval, jax_core.ShapedArray)
+      and not isinstance(aval.memory_space, jax_core.MemorySpace)
+      for aval in in_avals
+  ):
     input_memory_spaces = _get_memory_spaces_from_avals(
         in_avals, kernel_type=kernel_type
     )
@@ -207,9 +233,7 @@ def _resolve_tiling(
   if mosaic_params.use_tc_tiling_on_sc is None:
     return None
   if mosaic_params.kernel_type is tpu_core.CoreType.TC:
-    raise ValueError(
-        "use_tc_tiling_on_sc= is not supported for TC kernels"
-    )
+    raise ValueError("use_tc_tiling_on_sc= is not supported for TC kernels")
 
   return (
       tpu_custom_call.Tiling.COMPACT
@@ -362,6 +386,8 @@ def pallas_call_tpu_lowering_rule(
     assert isinstance(compiler_params, tpu_core.CompilerParams)
     mosaic_params = compiler_params
 
+  _check_sparsecore_availability(mosaic_params.kernel_type)
+
   del mesh
   jax_mesh = None
   axis_context = ctx.module_context.axis_context
@@ -472,9 +498,10 @@ def mpmd_map_tpu_lowering_rule(
     for mesh, jaxpr, grid_mapping in zip(
         meshes, jaxprs, grid_mappings, strict=True
     ):
-      if (
-          not hasattr(mesh, "kernel_type") or
-          not hasattr(mesh, "dimension_semantics")
+      _check_sparsecore_availability(mesh.kernel_type)
+
+      if not hasattr(mesh, "kernel_type") or not hasattr(
+          mesh, "dimension_semantics"
       ):
         raise ValueError(
             "mpmd_map requires the mesh to define its ``kernel_type`` and"
@@ -544,4 +571,6 @@ def mpmd_map_tpu_lowering_rule(
   )
 
 
-pallas_core.register_lowering_rule(tpu_core.CompilerParams, pallas_call_tpu_lowering_rule, "tpu")
+pallas_core.register_lowering_rule(
+    tpu_core.CompilerParams, pallas_call_tpu_lowering_rule, "tpu"
+)
