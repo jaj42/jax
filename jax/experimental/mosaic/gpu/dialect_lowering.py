@@ -512,6 +512,31 @@ def _vector_load_op_lowering_rule(
   return [_fragmented_array_to_ir(fragmented_array)]
 
 
+# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
+if hasattr(mgpu, "MultimemLoadReduceOp"):
+  @_register_lowering(mgpu.MultimemLoadReduceOp)
+  def _multimem_load_reduce_op_lowering_rule(
+      ctx: LoweringContext, op: mgpu.MultimemLoadReduceOp
+  ) -> Sequence[ir.Value]:
+    out_layout_attr, = inference_utils.out_layouts(op)
+    out_layout = layouts_lib.from_layout_attr(out_layout_attr)
+
+    assert ctx.launch_context is not None
+    multimem_ref = ctx.launch_context.to_remote_multicast(op.source)
+    reduction = str(mgpu.MultimemLoadReductionType(op.reduction_type.value))
+    vty = op.results[0].type
+    assert isinstance(vty, ir.VectorType)
+
+    fa_res = fa.FragmentedArray.load_reduce_untiled(
+        multimem_ref,
+        layout=out_layout,
+        reduction=reduction,
+        is_signed=op.is_signed
+    )
+
+    return [fragmented_array_to_ir(fa_res, op.result.type)]
+
+
 @_register_lowering(mgpu.VectorStoreOp)
 def _vector_store_op_lowering_rule(
     ctx: LoweringContext, op: mgpu.VectorStoreOp

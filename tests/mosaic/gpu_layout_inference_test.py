@@ -286,6 +286,48 @@ class LayoutInferenceTest(parameterized.TestCase):
     self.assertNotIn("in_layouts", load_op.attributes)
     self.checkOutLayouts(load_op, [strided_layout_attr])
 
+  def test_multimem_load_reduce_infer_layout_int(self):
+    shape = (256,)
+    with ir.InsertionPoint(self.module.body):
+      ref_ty = ir.MemRefType.get(shape, ir.IntegerType.get_signless(32))
+      [source] = undefs(ref_ty)
+      op = mgpu.dialect.MultimemLoadReduceOp(
+          source=source,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
+          is_signed=True,
+      )
+
+    mgpu.infer_layout(self.module)
+
+    expected_layout = layouts.to_layout_attr(
+        mgpu.WGStridedFragLayout(shape=shape, vec_size=1)
+    )
+    self.checkOutLayouts(op, [expected_layout])
+
+  def test_multimem_load_reduce_float_does_not_allow_splat_result(self):
+    shape = (256,)
+    splat_layout_attr = layouts.to_layout_attr(
+        mgpu.WGSplatFragLayout(shape=shape)
+    )
+    strided_layout_attr = layouts.to_layout_attr(
+        mgpu.WGStridedFragLayout(shape=shape, vec_size=2)
+    )
+
+    with ir.InsertionPoint(self.module.body):
+      vec_ty = ir.VectorType.get(shape, ir.F16Type.get())
+      ref_ty = ir.MemRefType.get(shape, ir.F16Type.get())
+      vec, ref = undefs(vec_ty, ref_ty)
+      op = mgpu.dialect.MultimemLoadReduceOp(
+          source=ref,
+          reduction_type=mgpu.dialect.MultimemLoadReductionType.Add,
+      )
+      lhs = layout_cast(vec, splat_layout_attr)
+      arith.AddFOp(lhs, op.results[0])
+
+    mgpu.infer_layout(self.module)
+
+    self.checkOutLayouts(op, [strided_layout_attr])
+
   def test_infer_layout_cast_layout(self):
     shape = (128, 64)
     splat_layout = layouts.to_layout_attr(mgpu.WGSplatFragLayout(shape=shape))

@@ -241,9 +241,16 @@ def _register_layouts_for_optimized_transfer_to_smem(
 ) -> Iterator[fa.FragmentedLayout]:
   """Yields register layout candidates for optimized transfers to SMEM."""
   if smem_layout.value is None:
+    layouts = []
     reg_layout = fa.WGStridedFragLayout.from_shaped_type(shaped_type)
     if reg_layout is not None:
-      yield reg_layout
+      layouts.append(reg_layout)
+    try:
+      reg_layout = fa.WGStridedFragLayout(tuple(shaped_type.shape), vec_size=1)
+      layouts.append(reg_layout)
+    except ValueError:
+      pass
+    yield from layouts
     return
 
   if is_hopper(arch):
@@ -714,6 +721,32 @@ def _vector_load_constraint_system(
 
   system = cs.ConstraintSystem(constraints=constraints)
   return system, value_sites_for_variable
+
+
+# TODO(olechwierowicz): remove this check once minimum jaxlib version is 0.10.0.
+if hasattr(mgpu, "MultimemLoadReduceOp"):
+  @_add_constraint_system_derivation_rule(mgpu.MultimemLoadReduceOp)
+  def _multimem_load_reduce_constraint_system(
+      _: DerivationContext,
+      op: mgpu.MultimemLoadReduceOp,
+  ) -> ConstraintSystemDerivationRuleResult:
+    dest = ValueSite(op, VariableType.RESULT, 0)
+    assert op.operands[0] is not None
+    dtype = op.operands[0].type
+    dest_var = cs.Variable(dest)
+    if isinstance(dtype.element_type, ir.IntegerType):
+      system = cs.ConstraintSystem(
+          assignments={
+              dest_var: cs.RegisterLayout(
+                  fa.WGStridedFragLayout(tuple(dtype.shape), vec_size=1)
+              )
+          }
+      )
+    else:
+      system = cs.ConstraintSystem(
+          constraints=[cs.NotOfType(dest_var, fa.WGSplatFragLayout)]
+      )
+    return system, {dest_var: [dest]}
 
 
 @_add_constraint_system_derivation_rule(mgpu.VectorStoreOp)

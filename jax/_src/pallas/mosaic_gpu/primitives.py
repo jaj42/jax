@@ -4516,6 +4516,46 @@ def _multimem_load_reduce_lowering_rule(
   )
   return arr
 
+
+@lowering.register_lowering_rule(multimem_load_reduce_p, mgpu.LoweringSemantics.Warpgroup)
+def _multimem_load_reduce_lowering_rule_wg(
+    ctx: lowering.LoweringRuleContext, ref, *transforms_leaves, tree, collective_axes, reduction_op,
+):
+  # TODO(olechwierowicz): Remove this check once min jaxlib version is 0.10.0
+  if not hasattr(mgpu.dialect, "MultimemLoadReduceOp"):
+    raise NotImplementedError("multimem_load_reduce_p is unsupported for WG semantics.")
+  assert hasattr(mgpu.dialect, "MultimemLoadReductionType")
+  if (mesh_info := ctx.module_ctx.mesh_info) is None:
+    raise ValueError(
+        "JAX device mesh is required by multimem_load_reduce, but not defined."
+    )
+  if set(collective_axes) != set(mesh_info.axis_names):
+    raise NotImplementedError(
+        "Only collective_axes that include all JAX device mesh"
+        f" ({mesh_info.axis_names}) axes are supported, but got"
+        f" {collective_axes}"
+    )
+  transforms = tree.unflatten(transforms_leaves)
+  transform_avals = tree.unflatten(ctx.avals_in[1:])
+  ref_aval = ctx.avals_in[0]
+  assert isinstance(ref_aval, state_types.AbstractRef)
+  ref, _, transforms = lowering._handle_transforms(ctx, ref_aval, ref,
+                                                   transform_avals, transforms,
+                                                   allow_peer_refs=False)
+  if transforms:
+    raise NotImplementedError(
+        f"Unhandled transforms for multimem_load_reduce: {transforms}"
+    )
+  assert reduction_op is not None
+  reduction_op_attr = getattr(mgpu.dialect.MultimemLoadReductionType, reduction_op.capitalize())
+  op = mgpu.dialect.MultimemLoadReduceOp(
+      source=ref,
+      reduction_type=reduction_op_attr,
+      is_signed=mgpu_utils.is_signed(ref_aval.dtype),
+  )
+  return op.results[0]
+
+
 def multimem_load_reduce(
     ref: _Ref,
     *,
