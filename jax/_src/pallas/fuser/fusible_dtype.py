@@ -37,10 +37,11 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import pallas_call
 from jax._src.pallas import primitives as pallas_primitives
 from jax._src.pallas.fuser import block_spec
-from jax._src.pallas.fuser.fusible import fusible_p
 from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as state_primitives
 from jax._src.util import foreach
+from jax._src import hijax
+from jax._src.pallas.fuser.fusible import Fusible
 
 # TODO(sharadmv): Enable type checking.
 
@@ -551,19 +552,27 @@ def _unpack_dtype_eval_rule(ctx: block_spec.KernelEvalContext, *args):
   return aval_in.dtype.unpack_eval_rule(ctx, *args)  # pyrefly: ignore[missing-attribute]
 
 
-def _fusible_physicalize_rule(
-    _, *consts_and_args, jaxpr, num_consts, in_tree, out_tree, func
-):
-  consts, _ = util.split_list(consts_and_args, [num_consts])
-  new_jaxpr = physicalize_closed_jaxpr(core.ClosedJaxpr(jaxpr, consts))
-  return fusible_p.bind(
-      *consts_and_args,
-      jaxpr=new_jaxpr.jaxpr,
-      num_consts=num_consts,
-      in_tree=in_tree,
-      out_tree=out_tree,
-      func=func,
+def _call_hi_primitive_physicalize_rule(_, *args, _prim):
+  if not isinstance(_prim, Fusible):
+    raise NotImplementedError(
+        f"Physicalization not implemented for {_prim}"
+    )
+  new_jaxpr = physicalize_closed_jaxpr(
+      core.ClosedJaxpr(_prim.jaxpr, _prim.consts)
   )
+  structured_in_avals = tree_util.tree_unflatten(
+      _prim.in_tree, [core.typeof(x) for x in args]
+  )
+  out_avals_flat = [v.aval for v in new_jaxpr.outvars]
+  new_out_aval = tree_util.tree_unflatten(_prim.out_tree, out_avals_flat)
+  structured_args = tree_util.tree_unflatten(_prim.in_tree, args)
+  new_prim = Fusible(
+      jaxpr=new_jaxpr.jaxpr,
+      consts=new_jaxpr.consts,
+      in_avals=structured_in_avals,
+      out_aval=new_out_aval,
+      params=_prim.params,
+  )
+  return new_prim(*structured_args)
 
-
-_physicalize_rules[fusible_p] = _fusible_physicalize_rule
+_physicalize_rules[hijax.call_hi_primitive_p] = _call_hi_primitive_physicalize_rule

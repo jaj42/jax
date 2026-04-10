@@ -317,6 +317,58 @@ class FusionTest(jtu.JaxTestCase):
     y_out = g(x, a)
     np.testing.assert_array_equal(y_out, a)
 
+  def test_vjp_support(self):
+    @fuser.fusible
+    def f(x_fn, y_fn, z_fn):
+      x = x_fn()
+      y = y_fn()
+      z = x * y
+      if z_fn is None:
+        z_fn = lambda x: x
+      return z_fn(z)
+
+    x, y = jnp.array(2.0), jnp.array(3.0)
+    val, vjp_fun = jax.vjp(f, x, y)
+    np.testing.assert_allclose(val, 6.0)
+
+    grads = vjp_fun(jnp.array(1.0))
+    np.testing.assert_allclose(grads, (3.0, 2.0))
+
+  def test_vmap_support(self):
+    @fuser.fusible
+    def f(x_fn, y_fn, out_fn):
+      x = x_fn()
+      y = y_fn()
+      if out_fn is None:
+        out_fn = lambda x: x
+      return out_fn(x * y)
+
+    x = jnp.array([2.0])
+    y = jnp.array([3.0])
+
+    val = jax.vmap(f)(x, y)
+    np.testing.assert_allclose(val, jnp.array([6.0]))
+
+  def test_effect_support(self):
+    ref = jax.new_ref(jnp.array(0.0))
+
+    @fuser.fusible
+    def f(x_fn, y_fn, out_fn):
+      x = x_fn()
+      y = y_fn()
+      ref[...] = x + y
+      if out_fn is None:
+        out_fn = lambda x: x
+      return out_fn(x * y)
+
+    x, y = jnp.array(2.0), jnp.array(3.0)
+    closed_jaxpr = jax.make_jaxpr(f)(x, y)
+    self.assertLen(closed_jaxpr.jaxpr.effects, 1)
+
+    jax.core.eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, x, y)
+
+    np.testing.assert_allclose(ref[...], 5.0)
+
 
 @dataclasses.dataclass(frozen=True)
 class ArrayTuple:

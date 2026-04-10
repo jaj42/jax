@@ -26,7 +26,8 @@ from jax._src import tree_util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas.fuser import fusible_dtype
 from jax._src.pallas.fuser import fusion as fusion_lib
-from jax._src.pallas.fuser.fusible import fusible_p
+from jax._src.pallas.fuser.fusible import Fusible
+from jax._src import hijax
 
 
 @functools.partial(api_boundary, repro_api_name="fuser.fuse")
@@ -259,7 +260,10 @@ def fuse_jaxpr(
 
   # Collect input fusions
   for i, eqn in enumerate(jaxpr.eqns):
-    if eqn.primitive is fusible_p:
+    if (
+      eqn.primitive is hijax.call_hi_primitive_p
+      and isinstance(eqn.params.get("_prim"), Fusible)
+    ):
       fusion_eqn_index = i
       break
   if fusion_eqn_index is None:
@@ -294,10 +298,10 @@ def fuse_jaxpr(
           ),
           var,
       )
-      for var in fusion_eqn.invars[fusion_eqn.params["num_consts"] :]
+      for var in fusion_eqn.invars
   ]
   in_fusions = tree_util.tree_unflatten(
-      fusion_eqn.params["in_tree"], in_fusions_flat
+      fusion_eqn.params["_prim"].in_tree, in_fusions_flat
   )
   output_fusions, output_permutation = _construct_output_fusions(
       candidate_values,
@@ -305,10 +309,10 @@ def fuse_jaxpr(
       out_tree,
       fusion_eqn_index,
       fusion_eqn.outvars,
-      fusion_eqn.params["out_tree"],
-      fusion_eqn.params["output_fusion_prefix"],
+      fusion_eqn.params["_prim"].out_tree,
+      fusion_eqn.params["_prim"].output_fusion_prefix,
   )
-  out = fusion_eqn.params["func"](*in_fusions, output_fusions)
+  out = fusion_eqn.params["_prim"].func(*in_fusions, output_fusions)
   flat_out = jax.tree.leaves(out)
   permuted_out = [flat_out[i] for i in output_permutation]
   assert len(permuted_out) == len(jaxpr.outvars), (
