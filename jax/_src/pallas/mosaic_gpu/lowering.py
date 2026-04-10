@@ -107,6 +107,30 @@ class ResourceEstimatorContext:
 AnyBarrier = mgpu.Barrier | mgpu.ClusterBarrier
 
 
+def _get_barrier(
+    aval: state_types.AbstractRef, arrival_multiplier: int
+) -> mgpu.Barrier:
+  num_arrivals = aval.dtype.num_arrivals
+  num_barriers = math.prod(aval.shape)
+  if not (orders_tc := aval.dtype.orders_tensor_core):
+    num_arrivals *= arrival_multiplier
+  return mgpu.Barrier(num_arrivals, num_barriers, orders_tc)
+
+
+def _get_cluster_barrier(
+    aval: state_types.AbstractRef, axis_names: _AxisNames
+) -> mgpu.ClusterBarrier:
+  num_arrivals = aval.dtype.num_arrivals
+  num_barriers = math.prod(aval.shape)
+  assert not aval.dtype.orders_tensor_core
+  resolve = functools.partial(_resolve_cluster_axis, axis_names)
+  collective_dims = jax.tree.map(resolve, aval.dtype.collective_axes)
+  leader_tracked = aval.dtype.leader_tracked
+  return mgpu.ClusterBarrier(
+      collective_dims, num_arrivals, num_barriers, leader_tracked
+  )
+
+
 @dataclasses.dataclass(kw_only=True, frozen=True)
 class Resources:
   smem_scratch_bytes: int = 0
@@ -307,32 +331,12 @@ def _run_scoped_resource_estimator(
   for v in jaxpr.invars:
     aval = cast(ShapedAbstractValue, v.aval)
     if isinstance(aval.dtype, gpu_core.BarrierType):
-      orders_tc = aval.dtype.orders_tensor_core
-      multiplier = 1 if orders_tc else ctx.arrival_multiplier
-      rs += Resources(
-          barrier_counts=collections.Counter([
-              mgpu.Barrier(
-                  aval.dtype.num_arrivals * multiplier,
-                  *aval.shape,
-                  orders_tensor_core=orders_tc,
-              )
-          ])
-      )
+      barrier = _get_barrier(aval, ctx.arrival_multiplier)
+      rs += Resources(barrier_counts=collections.Counter([barrier]))
       continue
     if isinstance(aval.dtype, gpu_core.ClusterBarrierType):
-      collective_dims = jax.tree.map(
-          lambda axis: _resolve_cluster_axis(ctx.axis_names, axis),
-          aval.dtype.collective_axes,
-      )
-      [num_barriers] = aval.shape
-      rs += Resources(
-          barrier_counts=collections.Counter(
-              [mgpu.ClusterBarrier(
-                  collective_dims, aval.dtype.num_arrivals, num_barriers,
-                  leader_tracked=aval.dtype.leader_tracked,
-              )]
-          )
-      )
+      barrier = _get_cluster_barrier(aval, ctx.axis_names)
+      rs += Resources(barrier_counts=collections.Counter([barrier]))
       continue
     assert isinstance(aval, state_types.AbstractRef)
     if aval.memory_space == gpu_core.TMEM:
@@ -3287,35 +3291,15 @@ def _run_scoped_lowering_rule(
             f" allocation (currently collective_axes={collective_axes})."
         )
       if isinstance(aval.dtype, gpu_core.BarrierType):
-        orders_tc = aval.dtype.orders_tensor_core
-        multiplier = 1 if orders_tc else ctx.estimator_ctx.arrival_multiplier
-        barrier_ref = alloc_stack.enter_context(
-            ctx.module_ctx.reserve_barrier(
-                mgpu.Barrier(
-                    aval.dtype.num_arrivals * multiplier,
-                    *aval.shape,
-                    orders_tensor_core=orders_tc,
-                )
-            )
-        )
-        input_refs.append(barrier_ref)
+        barrier = _get_barrier(aval, ctx.estimator_ctx.arrival_multiplier)
+        barrier_ctx = ctx.module_ctx.reserve_barrier(barrier)
+        input_refs.append(alloc_stack.enter_context(barrier_ctx))
         should_discharge.append(False)
         continue
       if isinstance(aval.dtype, gpu_core.ClusterBarrierType):
-        collective_dims = jax.tree.map(
-            lambda axis: _resolve_cluster_axis(ctx.module_ctx.axis_names, axis),
-            aval.dtype.collective_axes,
-        )
-        [num_barriers] = aval.shape
-        barrier_ref = alloc_stack.enter_context(
-            ctx.module_ctx.reserve_barrier(
-                mgpu.ClusterBarrier(
-                    collective_dims, aval.dtype.num_arrivals, num_barriers,
-                    leader_tracked=aval.dtype.leader_tracked,
-                )
-            )
-        )
-        input_refs.append(barrier_ref)
+        barrier = _get_cluster_barrier(aval, ctx.module_ctx.axis_names)
+        barrier_ctx = ctx.module_ctx.reserve_barrier(barrier)
+        input_refs.append(alloc_stack.enter_context(barrier_ctx))
         should_discharge.append(False)
         continue
 
