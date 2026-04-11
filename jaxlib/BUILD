@@ -66,6 +66,7 @@ pytype_strict_library(
         ":utils",
         ":weakref_lru_cache",
         ":xla_client",
+        "//jaxlib/cpu:_dce_sink",
         "//jaxlib/cpu:_lapack",
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir",
@@ -119,6 +120,7 @@ pytype_library(
     type_checking = "pyrefly",
     deps = [
         ":_jax",
+        "//jaxlib/cpu:_dce_sink",
         "//jaxlib/cpu:_lapack",
         "//jaxlib/cpu:_sparse",
         "//jaxlib/mlir:ir",

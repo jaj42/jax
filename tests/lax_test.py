@@ -3843,6 +3843,25 @@ class LaxTest(jtu.JaxTestCase):
     with self.assertNoWarnings():
       jax.jacobian(f)(x, y)
 
+  def test_dce_sink_prevents_xla_dce(self):
+    x = jnp.array(1.0)
+
+    def f(x):
+      y = x + 1
+      lax.dce_sink(y, prevent_mlir_dce=True)
+      return x
+    hlo = jax.jit(f).lower(x).compile().as_text()
+    self.assertIn("custom_call", hlo)
+    self.assertIn("dce_sink", hlo)
+    self.assertIn("add", hlo)
+
+    def g(x):
+      y = x + 1
+      lax.dce_sink(y)  # default prevent_mlir_dce=False
+      return x
+    hlo = jax.jit(g).lower(x).compile().as_text()
+    self.assertNotIn("add", hlo)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):

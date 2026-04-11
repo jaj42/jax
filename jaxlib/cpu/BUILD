@@ -145,3 +145,20 @@ nanobind_extension(
         "@xla//xla/ffi/api:ffi",
     ],
 )
+
+nanobind_extension(
+    name = "_dce_sink",
+    srcs = ["dce_sink.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    enable_stub_generation = False,
+    features = ["-use_header_modules"],
+    module_name = "_dce_sink",
+    deps = [
+        "//jaxlib:kernel_nanobind_helpers",
+        "@nanobind",
+        "@xla//xla/ffi/api:ffi",
+    ],
+)
